@@ -7,7 +7,6 @@ that can be activated with Discord bot tokens.
 """
 
 import json
-import os
 import sys
 import uuid
 from datetime import datetime
@@ -261,6 +260,50 @@ def handle_find_agent_by_name(name: str) -> dict:
         return {"error": f"No agent found matching '{name}'"}
 
 
+def handle_start_agent(agent_id: str) -> dict:
+    """
+    Start an agent that has already been activated with a token.
+
+    Args:
+        agent_id: The agent's unique ID
+
+    Returns:
+        Status dict with start result
+    """
+    registry = load_registry()
+    agent = registry["agents"].get(agent_id)
+
+    if not agent:
+        return {"success": False, "error": f"Agent {agent_id} not found"}
+
+    if not agent.get("token"):
+        return {"success": False, "error": f"Agent {agent_id} has no token. Activate it first."}
+
+    if agent.get("status") == "active":
+        return {"success": False, "error": f"Agent {agent_id} is already running"}
+
+    # Write activation signal file
+    activation_dir = AGENTS_DIR / ".activations"
+    activation_dir.mkdir(parents=True, exist_ok=True)
+
+    activation_file = activation_dir / f"{agent_id}.json"
+    with open(activation_file, "w") as f:
+        json.dump({
+            "agent_id": agent_id,
+            "name": agent["name"],
+            "token": agent["token"],
+            "port": agent["port"],
+            "timestamp": datetime.now().isoformat()
+        }, f, indent=2)
+
+    return {
+        "success": True,
+        "agent_id": agent_id,
+        "name": agent["name"],
+        "message": f"Starting {agent['name']}... The bot will be online shortly.",
+    }
+
+
 def handle_request(request: dict) -> dict:
     """Handle an MCP request."""
     method = request.get("method")
@@ -359,6 +402,20 @@ def handle_request(request: dict) -> dict:
                         },
                         "required": ["name"]
                     }
+                },
+                {
+                    "name": "start_agent",
+                    "description": "Start an agent that has been activated with a token. Call this after activate_agent to actually start the bot.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {
+                                "type": "string",
+                                "description": "The agent's unique ID"
+                            }
+                        },
+                        "required": ["agent_id"]
+                    }
                 }
             ]
         }
@@ -386,6 +443,8 @@ def handle_request(request: dict) -> dict:
             )
         elif tool_name == "find_agent_by_name":
             result = handle_find_agent_by_name(arguments.get("name"))
+        elif tool_name == "start_agent":
+            result = handle_start_agent(arguments.get("agent_id"))
         else:
             return {
                 "error": {

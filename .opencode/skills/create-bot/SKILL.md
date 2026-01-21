@@ -43,14 +43,33 @@ After creating the agent, tell the user:
 4. Under "Privileged Gateway Intents", enable:
    - MESSAGE CONTENT INTENT
 5. Click "Reset Token" and copy the token
-6. **DM the token to you** (never post tokens publicly!)
+6. Send the token to BoBB (mention me with it, or DM it)
 
 ### 4. Confirm and Next Steps
 
 After explaining the setup:
 - Confirm what was created
-- Remind them to DM you the token
-- Let them know you'll activate the bot once you receive the token
+- Let them know they can mention you with the token or DM it to you
+- Let them know you'll activate and start the bot once you receive the token
+
+### 5. Receive Token and Start Bot
+
+When the user provides a token:
+1. Find the agent using `find_agent_by_name` or `get_pending_agents`
+2. Use `activate_agent` to store the token
+3. Use `start_agent` to start the bot
+4. Confirm the bot is now online
+
+```
+activate_agent({
+  agent_id: "abc123",
+  token: "the-token-user-provided"
+})
+
+start_agent({
+  agent_id: "abc123"
+})
+```
 
 ## Example Flow
 
@@ -74,7 +93,16 @@ BoBB: ChefBot is set up! Here's what you need to do next:
 3. Go to "Bot" → "Add Bot"
 4. Enable "MESSAGE CONTENT INTENT" under Privileged Gateway Intents
 5. Click "Reset Token" → Copy it
-6. **DM me the token** (keep it secret!)
+6. Send it to me (mention me with it, or DM)
 
-Once I have the token, I'll activate ChefBot for you!
+Once I have the token, I'll activate and start ChefBot for you!
+
+User: Here's the token: MTQ2...xxx
+
+BoBB: Got it! Activating ChefBot now...
+
+[Uses activate_agent tool]
+[Uses start_agent tool]
+
+BoBB: ChefBot is now online! You can mention @ChefBot in any channel to start chatting.
 ```

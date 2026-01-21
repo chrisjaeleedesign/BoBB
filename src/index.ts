@@ -1,51 +1,133 @@
 import { ChannelType, TextChannel } from "discord.js";
+import path from "path";
+import { readFile } from "fs/promises";
 import { BotManager } from "./bot-manager";
 import { OpenCodeBridge } from "./opencode-bridge";
 import { MessageQueue } from "./message-queue";
 import { ActivationWatcher } from "./activation-watcher";
+import { BobbConfig, loadConfig } from "./config";
+import { OpenCodeManager } from "./opencode-manager";
+
+interface AgentRegistry {
+  agents: Record<string, {
+    id: string;
+    name: string;
+    token: string;
+    port: number;
+    status: string;
+  }>;
+}
 
 const BOBB_ID = "bobb";
 const BOBB_NAME = "BoBB";
-const BOBB_PORT = 4096;
 
 // Track OpenCode bridges for child agents
 const bridges: Map<string, OpenCodeBridge> = new Map();
 
-async function main() {
-  const token = process.env.BOBB_DISCORD_TOKEN;
+export interface RunMainAppOptions {
+  config: BobbConfig;
+  opencodeManager?: OpenCodeManager;
+}
 
-  if (!token) {
-    console.error("Error: BOBB_DISCORD_TOKEN environment variable is not set");
-    console.error("Copy .env.example to .env and add your bot token");
-    process.exit(1);
+/**
+ * Start any agents that are in ready_to_start state from registry
+ */
+async function startExistingAgents(
+  manager: BotManager,
+  opencodeManager: OpenCodeManager | undefined,
+  bridgesMap: Map<string, OpenCodeBridge>
+): Promise<void> {
+  const registryPath = path.join(process.cwd(), "agents", "registry.json");
+
+  try {
+    const content = await readFile(registryPath, "utf-8");
+    const registry: AgentRegistry = JSON.parse(content);
+
+    for (const agent of Object.values(registry.agents)) {
+      if (agent.status === "ready_to_start" && agent.token) {
+        console.log(`\n=== Starting existing agent: ${agent.name} ===`);
+
+        if (manager.hasBot(agent.id)) {
+          console.log(`Agent ${agent.name} is already running`);
+          continue;
+        }
+
+        try {
+          if (opencodeManager) {
+            const agentDir = path.join(process.cwd(), "agents", agent.id);
+            await opencodeManager.startServer(agent.id, agent.port, agentDir);
+          }
+
+          const childBridge = new OpenCodeBridge(agent.port);
+          bridgesMap.set(agent.id, childBridge);
+
+          await manager.startBot({
+            id: agent.id,
+            name: agent.name,
+            token: agent.token,
+            opencodePort: agent.port,
+          });
+
+          console.log(`Agent ${agent.name} started successfully!`);
+        } catch (error) {
+          console.error(`Failed to start agent ${agent.name}:`, error);
+          bridgesMap.delete(agent.id);
+          if (opencodeManager) {
+            opencodeManager.stopServer(agent.id);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error("Error loading agent registry:", error);
+    }
   }
+}
+
+/**
+ * Main application logic - can be called from startup.ts or run directly
+ */
+export async function runMainApp(options: RunMainAppOptions): Promise<void> {
+  const { config, opencodeManager } = options;
 
   const manager = new BotManager();
   const messageQueue = new MessageQueue();
   const activationWatcher = new ActivationWatcher();
 
   // Create OpenCode bridge for BoBB
-  const bobbBridge = new OpenCodeBridge(BOBB_PORT);
+  const bobbBridge = new OpenCodeBridge(config.bobbPort);
   bridges.set(BOBB_ID, bobbBridge);
 
-  // Check if OpenCode server is running
-  const isHealthy = await bobbBridge.isHealthy();
-  if (!isHealthy) {
-    console.warn(`Warning: OpenCode server not reachable at port ${BOBB_PORT}`);
-    console.warn("Start it with: opencode serve --port 4096");
-    console.warn("Continuing without OpenCode integration...\n");
-  } else {
-    console.log(`OpenCode server connected at port ${BOBB_PORT}`);
+  // Check if OpenCode server is running (only warn if not managed by orchestrator)
+  if (!opencodeManager) {
+    const isHealthy = await bobbBridge.isHealthy();
+    if (!isHealthy) {
+      console.warn(`Warning: OpenCode server not reachable at port ${config.bobbPort}`);
+      console.warn(`Start it with: opencode serve --port ${config.bobbPort}`);
+      console.warn("Continuing without OpenCode integration...\n");
+    } else {
+      console.log(`OpenCode server connected at port ${config.bobbPort}`);
+    }
   }
 
   // Handle graceful shutdown
-  process.on("SIGINT", async () => {
+  const shutdown = async () => {
     console.log("\nShutting down...");
     messageQueue.stop();
     activationWatcher.stop();
     await manager.stopAll();
+
+    // Stop OpenCode servers if managed by orchestrator
+    if (opencodeManager) {
+      await opencodeManager.stopAll();
+    }
+
     process.exit(0);
-  });
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 
   // Helper function to forward message to OpenCode
   async function forwardToOpenCode(
@@ -186,6 +268,12 @@ async function main() {
     }
 
     try {
+      // Auto-start OpenCode server for child agent if orchestrator is available
+      if (opencodeManager) {
+        const agentDir = path.join(process.cwd(), "agents", request.agent_id);
+        await opencodeManager.startServer(request.agent_id, request.port, agentDir);
+      }
+
       // Create OpenCode bridge for the new agent
       const childBridge = new OpenCodeBridge(request.port);
       bridges.set(request.agent_id, childBridge);
@@ -199,10 +287,19 @@ async function main() {
       });
 
       console.log(`Agent ${request.name} activated successfully!`);
-      console.log(`Note: Start its OpenCode server with: cd agents/${request.agent_id} && opencode serve --port ${request.port}`);
+
+      // Only show manual start message if not managed by orchestrator
+      if (!opencodeManager) {
+        console.log(`Note: Start its OpenCode server with: cd agents/${request.agent_id} && opencode serve --port ${request.port}`);
+      }
     } catch (error) {
       console.error(`Failed to activate agent ${request.name}:`, error);
       bridges.delete(request.agent_id);
+
+      // Clean up OpenCode server if it was started
+      if (opencodeManager) {
+        opencodeManager.stopServer(request.agent_id);
+      }
     }
   });
 
@@ -215,9 +312,12 @@ async function main() {
   await manager.startBot({
     id: BOBB_ID,
     name: BOBB_NAME,
-    token: token,
-    opencodePort: BOBB_PORT,
+    token: config.discordToken,
+    opencodePort: config.bobbPort,
   });
+
+  // Start any existing agents that are ready_to_start
+  await startExistingAgents(manager, opencodeManager, bridges);
 
   console.log("\n========================================");
   console.log("BoBB is running!");
@@ -226,4 +326,14 @@ async function main() {
   console.log("========================================\n");
 }
 
-main().catch(console.error);
+// Allow direct execution for backwards compatibility
+async function main() {
+  const config = loadConfig();
+  await runMainApp({ config });
+}
+
+// Only run main if this file is executed directly
+const isMainModule = import.meta.main ?? process.argv[1]?.includes("index.ts");
+if (isMainModule) {
+  main().catch(console.error);
+}

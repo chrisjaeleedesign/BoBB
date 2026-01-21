@@ -4,8 +4,9 @@
   "description": "Bot Builder Bot - Discord bot that creates other Discord bots using OpenCode",
   "type": "module",
   "scripts": {
-    "dev": "bun run src/index.ts",
-    "start": "bun run src/index.ts"
+    "start": "bun run src/startup.ts",
+    "dev": "bun --watch run src/startup.ts",
+    "start:discord-only": "bun run src/index.ts"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.1.28",
