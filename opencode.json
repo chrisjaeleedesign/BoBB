@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "google/gemini-2.5-flash",
+  "mcp": {
+    "discord": {
+      "type": "local",
+      "command": ["python3", "tools/mcp_discord.py"],
+      "enabled": true
+    },
+    "agent-manager": {
+      "type": "local",
+      "command": ["python3", "tools/mcp_agent_manager.py"],
+      "enabled": true
+    }
+  }
+}

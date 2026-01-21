@@ -1,0 +1,18 @@
+{
+  "name": "bobb",
+  "version": "0.1.0",
+  "description": "Bot Builder Bot - Discord bot that creates other Discord bots using OpenCode",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.1.28",
+    "discord.js": "^14.14.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}
