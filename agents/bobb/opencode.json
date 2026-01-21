@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "google/gemini-2.5-flash",
+  "agent": {
+    "discord-bot": {
+      "description": "Discord bot agent that responds via send_message tool only",
+      "model": "google/gemini-2.5-flash",
+      "tools": {
+        "send_message": true,
+        "create_agent": true,
+        "activate_agent": true,
+        "list_agents": true,
+        "get_agent": true,
+        "get_pending_agents": true,
+        "find_agent_by_name": true,
+        "read": false,
+        "write": false,
+        "edit": false,
+        "bash": false,
+        "glob": false,
+        "grep": false
+      }
+    }
+  }
+}

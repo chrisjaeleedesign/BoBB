@@ -1,12 +1,12 @@
-import { ChannelType, TextChannel } from "discord.js";
+import { ChannelType } from "discord.js";
 import path from "path";
 import { readFile } from "fs/promises";
 import { BotManager } from "./bot-manager";
-import { OpenCodeBridge } from "./opencode-bridge";
-import { MessageQueue } from "./message-queue";
+import { OpenCodeBridge, OpenCodeResponse } from "./opencode-bridge";
 import { ActivationWatcher } from "./activation-watcher";
 import { BobbConfig, loadConfig } from "./config";
 import { OpenCodeManager } from "./opencode-manager";
+import { createAPIServer, type APIServer } from "./api";
 
 interface AgentRegistry {
   agents: Record<string, {
@@ -20,6 +20,7 @@ interface AgentRegistry {
 
 const BOBB_ID = "bobb";
 const BOBB_NAME = "BoBB";
+const API_PORT = 3001;
 
 // Track OpenCode bridges for child agents
 const bridges: Map<string, OpenCodeBridge> = new Map();
@@ -37,7 +38,7 @@ async function startExistingAgents(
   opencodeManager: OpenCodeManager | undefined,
   bridgesMap: Map<string, OpenCodeBridge>
 ): Promise<void> {
-  const registryPath = path.join(process.cwd(), "agents", "registry.json");
+  const registryPath = path.join(process.cwd(), "registry.json");
 
   try {
     const content = await readFile(registryPath, "utf-8");
@@ -92,10 +93,13 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
   const { config, opencodeManager } = options;
 
   const manager = new BotManager();
-  const messageQueue = new MessageQueue();
   const activationWatcher = new ActivationWatcher();
 
-  // Create OpenCode bridge for BoBB
+  // Create API server - provides HTTP endpoints for tools
+  let apiServer: APIServer | null = null;
+
+  // Create OpenCode bridge for BoBB (runs from agents/bobb/)
+  const bobbDir = path.join(process.cwd(), "agents", "bobb");
   const bobbBridge = new OpenCodeBridge(config.bobbPort);
   bridges.set(BOBB_ID, bobbBridge);
 
@@ -104,7 +108,7 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     const isHealthy = await bobbBridge.isHealthy();
     if (!isHealthy) {
       console.warn(`Warning: OpenCode server not reachable at port ${config.bobbPort}`);
-      console.warn(`Start it with: opencode serve --port ${config.bobbPort}`);
+      console.warn(`Start it with: cd agents/bobb && opencode serve --port ${config.bobbPort}`);
       console.warn("Continuing without OpenCode integration...\n");
     } else {
       console.log(`OpenCode server connected at port ${config.bobbPort}`);
@@ -114,9 +118,13 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
   // Handle graceful shutdown
   const shutdown = async () => {
     console.log("\nShutting down...");
-    messageQueue.stop();
     activationWatcher.stop();
     await manager.stopAll();
+
+    // Stop API server
+    if (apiServer) {
+      apiServer.stop();
+    }
 
     // Stop OpenCode servers if managed by orchestrator
     if (opencodeManager) {
@@ -158,10 +166,14 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
         isDM,
       });
 
-      if (response) {
-        console.log(`OpenCode response received (${response.length} chars)`);
-      } else {
-        console.log("No response from OpenCode");
+      if (response.toolsInvoked.length > 0) {
+        console.log(`OpenCode invoked tools: ${response.toolsInvoked.join(", ")}`);
+      }
+      if (response.text) {
+        console.log(`OpenCode text response (${response.text.length} chars)`);
+      }
+      if (!response.hasResponse) {
+        console.log("Warning: OpenCode returned no tools and no text");
       }
     } catch (error) {
       console.error("Error forwarding to OpenCode:", error);
@@ -179,7 +191,7 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     console.log(`------------------------\n`);
 
     // Show typing indicator while processing
-    if (message.channel.isTextBased()) {
+    if (message.channel.isTextBased() && "sendTyping" in message.channel) {
       await message.channel.sendTyping();
     }
 
@@ -195,61 +207,13 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     console.log(`-------------------\n`);
 
     // Show typing indicator while processing
-    await message.channel.sendTyping();
+    if ("sendTyping" in message.channel) {
+      await message.channel.sendTyping();
+    }
 
     // Only BoBB handles DMs for token submission
     if (bot.config.id === BOBB_ID) {
       await forwardToOpenCode(message, BOBB_ID);
-    }
-  });
-
-  // Set up handler for MCP tool messages (OpenCode -> Discord)
-  messageQueue.onMessage(async (pendingMessage) => {
-    console.log(`\n--- Sending to Discord ---`);
-    console.log(`Channel: ${pendingMessage.channel_id}`);
-    console.log(`Content: ${pendingMessage.content.substring(0, 100)}...`);
-    console.log(`--------------------------\n`);
-
-    // Find a bot that can send to this channel
-    // Try BoBB first, then check child bots
-    let sendingBot = manager.getBot(BOBB_ID);
-
-    if (!sendingBot || !sendingBot.ready) {
-      // Try to find any ready bot
-      const allBots = manager.getAllBots();
-      sendingBot = allBots.find((b) => b.ready);
-    }
-
-    if (!sendingBot) {
-      console.error("No bot available to send message");
-      return;
-    }
-
-    try {
-      const channel = await sendingBot.client.channels.fetch(pendingMessage.channel_id);
-
-      if (!channel || !channel.isTextBased()) {
-        console.error(`Channel ${pendingMessage.channel_id} not found or not text-based`);
-        return;
-      }
-
-      if (channel.type === ChannelType.DM) {
-        await channel.send(pendingMessage.content);
-      } else {
-        const options: { content: string; reply?: { messageReference: string } } = {
-          content: pendingMessage.content,
-        };
-
-        if (pendingMessage.reply_to) {
-          options.reply = { messageReference: pendingMessage.reply_to };
-        }
-
-        await (channel as TextChannel).send(options);
-      }
-
-      console.log("Message sent to Discord successfully");
-    } catch (error) {
-      console.error("Error sending to Discord:", error);
     }
   });
 
@@ -303,8 +267,20 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     }
   });
 
-  // Start the watchers
-  await messageQueue.start();
+  // Start the API server (for tools to call)
+  apiServer = createAPIServer(() => {
+    // Return any ready bot's client for sending messages (prefer BoBB)
+    const bobbBot = manager.getBot(BOBB_ID);
+    if (bobbBot?.ready) {
+      return bobbBot.client;
+    }
+    const allBots = manager.getAllBots();
+    const readyBot = allBots.find((b) => b.ready);
+    return readyBot?.client || null;
+  });
+  await apiServer.start(API_PORT);
+
+  // Start the activation watcher
   await activationWatcher.start();
 
   // Start BoBB
@@ -321,6 +297,7 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
 
   console.log("\n========================================");
   console.log("BoBB is running!");
+  console.log(`API server: http://localhost:${API_PORT}`);
   console.log("- Mention @BoBB in Discord to interact");
   console.log("- DM @BoBB with a bot token to activate an agent");
   console.log("========================================\n");

@@ -8,10 +8,11 @@ async function main() {
   const config = loadConfig();
   const opencodeManager = new OpenCodeManager(config.opencodeCommand, config.healthCheckTimeout);
 
-  // 1. Start BoBB's OpenCode server
-  console.log(`Starting OpenCode server on port ${config.bobbPort}...`);
+  // 1. Start BoBB's OpenCode server (runs from agents/bobb/ directory)
+  const bobbDir = `${process.cwd()}/agents/bobb`;
+  console.log(`Starting OpenCode server on port ${config.bobbPort} (from ${bobbDir})...`);
   try {
-    await opencodeManager.startServer("bobb", config.bobbPort);
+    await opencodeManager.startServer("bobb", config.bobbPort, bobbDir);
   } catch (error) {
     console.error(`Failed to start OpenCode server: ${error}`);
     console.error("\nMake sure 'opencode' is installed and in your PATH.");

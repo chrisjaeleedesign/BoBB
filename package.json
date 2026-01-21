@@ -9,6 +9,7 @@
     "start:discord-only": "bun run src/index.ts"
   },
   "dependencies": {
+    "@opencode-ai/plugin": "^1.1.30",
     "@opencode-ai/sdk": "^1.1.28",
     "discord.js": "^14.14.1"
   },

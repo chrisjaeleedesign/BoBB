@@ -9,6 +9,12 @@ export interface OpenCodeMessage {
   isDM: boolean;
 }
 
+export interface OpenCodeResponse {
+  text: string | null;
+  toolsInvoked: string[];
+  hasResponse: boolean;
+}
+
 export class OpenCodeBridge {
   private client: ReturnType<typeof createOpencodeClient>;
   private sessionId: string | null = null;
@@ -33,14 +39,14 @@ export class OpenCodeBridge {
       body: { title: "Discord Bot Session" },
     });
 
-    this.sessionId = session.data.id;
-    return session.data.id;
+    this.sessionId = session.data?.id ?? null;
+    return this.sessionId!;
   }
 
   /**
    * Send a Discord message to OpenCode and get the response
    */
-  async sendMessage(message: OpenCodeMessage): Promise<string | null> {
+  async sendMessage(message: OpenCodeMessage): Promise<OpenCodeResponse> {
     const sessionId = await this.getSession();
 
     const formattedMessage = this.formatDiscordMessage(message);
@@ -49,20 +55,47 @@ export class OpenCodeBridge {
       path: { id: sessionId },
       body: {
         parts: [{ type: "text", text: formattedMessage }],
+        // Disable code editing tools, only allow our custom Discord tools
+        tools: {
+          read: false,
+          write: false,
+          edit: false,
+          bash: false,
+          glob: false,
+          grep: false,
+          patch: false,
+          webfetch: false,
+          // Our custom tools should remain enabled by default
+        },
       },
     });
 
-    // Extract text response from result.data.parts
-    if (result.data?.parts && result.data.parts.length > 0) {
-      const textParts = result.data.parts.filter(
-        (p: { type: string }) => p.type === "text"
-      );
-      if (textParts.length > 0) {
-        return (textParts[0] as { type: string; text: string }).text;
-      }
-    }
+    // Debug: log the full response structure
+    console.log(`[OpenCodeBridge:${this.port}] Raw response:`, JSON.stringify(result.data, null, 2));
 
-    return null;
+    // Extract both text and tool_use parts from response
+    const parts = result.data?.parts || [];
+
+    const textParts = parts.filter(
+      (p: { type: string }) => p.type === "text"
+    );
+    const toolParts = parts.filter(
+      (p: { type: string }) => p.type === "tool"
+    );
+
+    const text = textParts.length > 0
+      ? (textParts[0] as { type: string; text: string }).text
+      : null;
+
+    const toolsInvoked = toolParts.map(
+      (p: { type: string; tool?: string }) => p.tool || "unknown"
+    );
+
+    return {
+      text,
+      toolsInvoked,
+      hasResponse: text !== null || toolsInvoked.length > 0,
+    };
   }
 
   /**
@@ -87,7 +120,8 @@ ${message.content}`;
       // Use session.list as a health check since global.health doesn't exist
       await this.client.session.list();
       return true;
-    } catch {
+    } catch (error) {
+      console.log(`[OpenCodeBridge:${this.port}] Health check failed:`, error);
       return false;
     }
   }

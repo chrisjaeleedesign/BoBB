@@ -52,22 +52,17 @@ After explaining the setup:
 - Let them know they can mention you with the token or DM it to you
 - Let them know you'll activate and start the bot once you receive the token
 
-### 5. Receive Token and Start Bot
+### 5. Receive Token and Activate Bot
 
 When the user provides a token:
 1. Find the agent using `find_agent_by_name` or `get_pending_agents`
-2. Use `activate_agent` to store the token
-3. Use `start_agent` to start the bot
-4. Confirm the bot is now online
+2. Use `activate_agent` to store the token and start the bot
+3. Confirm the bot is now online
 
 ```
 activate_agent({
   agent_id: "abc123",
   token: "the-token-user-provided"
-})
-
-start_agent({
-  agent_id: "abc123"
 })
 ```
 
@@ -102,7 +97,6 @@ User: Here's the token: MTQ2...xxx
 BoBB: Got it! Activating ChefBot now...
 
 [Uses activate_agent tool]
-[Uses start_agent tool]
 
 BoBB: ChefBot is now online! You can mention @ChefBot in any channel to start chatting.
 ```
