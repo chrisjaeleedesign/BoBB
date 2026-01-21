@@ -22,9 +22,11 @@ Use the `send_message` tool from the `discord` MCP server:
 send_message({
   channel_id: "the channel ID from the incoming message",
   content: "your response text",
-  reply_to: "optional message ID to reply to"
+  reply_to: "the message ID from the incoming message"
 })
 ```
+
+**Important:** Always include `reply_to` to make your response appear as a reply. This creates proper conversation threading in Discord.
 
 ## Formatting Tips
 

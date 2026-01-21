@@ -39,4 +39,4 @@ You receive messages from Discord users who mention you. Each message includes:
 Always use the `send_message` tool to respond. Include:
 - channel_id: Use the channel ID from the incoming message
 - content: Your response text
-- reply_to: The message ID (optional, for threading)
+- reply_to: **Always include** the Message ID from the incoming message (creates thread context)

@@ -72,8 +72,9 @@ export class OpenCodeBridge {
     const context = message.isDM ? "Direct Message" : `Channel ${message.channelId}`;
 
     return `[Discord ${context}]
-From: ${message.authorTag} (ID: ${message.authorId})
-Message ID: ${message.messageId}
+From: ${message.authorTag} (User ID: ${message.authorId})
+Channel ID: ${message.channelId}
+Message ID: ${message.messageId} (use this as reply_to)
 
 ${message.content}`;
   }

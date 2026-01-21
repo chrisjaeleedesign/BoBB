@@ -96,6 +96,11 @@ async function main() {
     console.log(`Message ID: ${message.id}`);
     console.log(`------------------------\n`);
 
+    // Show typing indicator while processing
+    if (message.channel.isTextBased()) {
+      await message.channel.sendTyping();
+    }
+
     await forwardToOpenCode(message, bot.config.id);
   });
 
@@ -106,6 +111,9 @@ async function main() {
     console.log(`From: ${message.author.tag} (${message.author.id})`);
     console.log(`Content: ${message.content.substring(0, 50)}...`);
     console.log(`-------------------\n`);
+
+    // Show typing indicator while processing
+    await message.channel.sendTyping();
 
     // Only BoBB handles DMs for token submission
     if (bot.config.id === BOBB_ID) {
