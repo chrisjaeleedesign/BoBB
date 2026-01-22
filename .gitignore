@@ -7,3 +7,6 @@ __pycache__/
 *.pyc
 .venv/
 bun.lockb
+
+# Registry contains Discord bot tokens - use registry.example.json as template
+registry.json

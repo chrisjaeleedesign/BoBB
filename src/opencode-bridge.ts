@@ -1,5 +1,12 @@
 import { createOpencodeClient } from "@opencode-ai/sdk";
 
+export interface ChannelHistoryMessage {
+  author: string;
+  content: string;
+  timestamp: Date;
+  isBot: boolean;
+}
+
 export interface OpenCodeMessage {
   channelId: string;
   messageId: string;
@@ -7,6 +14,12 @@ export interface OpenCodeMessage {
   authorTag: string;
   content: string;
   isDM: boolean;
+  isFromBot: boolean;
+  authorBotName?: string;
+  mentionedBots?: string[];
+  recentHistory?: ChannelHistoryMessage[];
+  selfBotName?: string;
+  selfDiscordTag?: string;
 }
 
 export interface OpenCodeResponse {
@@ -99,15 +112,64 @@ export class OpenCodeBridge {
   }
 
   /**
+   * Format time ago from a timestamp
+   */
+  private formatTimeAgo(timestamp: Date): string {
+    const seconds = Math.floor((Date.now() - timestamp.getTime()) / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ago`;
+  }
+
+  /**
    * Format a Discord message for the LLM
    */
   private formatDiscordMessage(message: OpenCodeMessage): string {
     const context = message.isDM ? "Direct Message" : `Channel ${message.channelId}`;
 
+    // Build self-identity line so bot knows who it is
+    let selfIdentityLine = "";
+    if (message.selfBotName) {
+      selfIdentityLine = `You are: ${message.selfBotName}`;
+      if (message.selfDiscordTag) {
+        selfIdentityLine += ` (${message.selfDiscordTag})`;
+      }
+      selfIdentityLine += "\n";
+    }
+
+    // Build author line with bot indicator
+    let authorLine = `From: ${message.authorTag} (User ID: ${message.authorId})`;
+    if (message.isFromBot) {
+      authorLine += " [BOT]";
+      if (message.authorBotName) {
+        authorLine += ` (Bot Name: ${message.authorBotName})`;
+      }
+    }
+
+    // Build mentioned bots line if any
+    let mentionedBotsLine = "";
+    if (message.mentionedBots && message.mentionedBots.length > 0) {
+      mentionedBotsLine = `\nOther Bots Mentioned: ${message.mentionedBots.join(", ")}`;
+    }
+
+    // Build recent history section if available
+    let historySection = "";
+    if (message.recentHistory && message.recentHistory.length > 0) {
+      const historyLines = message.recentHistory.map((m) => {
+        const timeAgo = this.formatTimeAgo(m.timestamp);
+        const botTag = m.isBot ? " [BOT]" : "";
+        return `[${timeAgo}] ${m.author}${botTag}: ${m.content}`;
+      });
+      historySection = `\n\n--- Recent Channel History ---\n${historyLines.join("\n")}\n--- End History ---`;
+    }
+
     return `[Discord ${context}]
-From: ${message.authorTag} (User ID: ${message.authorId})
+${selfIdentityLine}${authorLine}
 Channel ID: ${message.channelId}
-Message ID: ${message.messageId} (use this as reply_to)
+Message ID: ${message.messageId} (use this as reply_to)${mentionedBotsLine}
+Is From Bot: ${message.isFromBot}${historySection}
 
 ${message.content}`;
   }

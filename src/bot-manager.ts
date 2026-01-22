@@ -11,6 +11,7 @@ export interface BotInstance {
   config: BotConfig;
   client: Client;
   ready: boolean;
+  discordUserId?: string;
 }
 
 type MessageHandler = (message: Message, bot: BotInstance) => Promise<void>;
@@ -61,7 +62,8 @@ export class BotManager {
 
     client.once("ready", () => {
       instance.ready = true;
-      console.log(`[${config.name}] Ready! Logged in as ${client.user?.tag}`);
+      instance.discordUserId = client.user?.id;
+      console.log(`[${config.name}] Ready! Logged in as ${client.user?.tag} (ID: ${client.user?.id})`);
     });
 
     client.on("messageCreate", async (message) => {
@@ -82,8 +84,24 @@ export class BotManager {
 
       // Handle mentions in channels
       if (client.user && message.mentions.has(client.user.id)) {
+        const isFromBot = message.author.bot;
+
+        // Check if this is an EXPLICIT mention in the message content
+        // (Discord automatically adds replied-to user to mentions, but we want to
+        // distinguish explicit @mentions from implicit reply pings for bot messages)
+        const isExplicitMention = message.content.includes(`<@${client.user.id}>`) ||
+                                  message.content.includes(`<@!${client.user.id}>`);
+
+        // If from a bot and not explicitly mentioned, ignore (prevents bot reply loops)
+        if (isFromBot && !isExplicitMention) {
+          console.log(
+            `[${config.name}] Ignoring implicit mention from bot ${message.author.tag}`
+          );
+          return;
+        }
+
         console.log(
-          `[${config.name}] Mentioned by ${message.author.tag}: ${message.content}`
+          `[${config.name}] Mentioned by ${message.author.tag}${isFromBot ? " [BOT]" : ""}: ${message.content}`
         );
 
         if (this.messageHandler) {

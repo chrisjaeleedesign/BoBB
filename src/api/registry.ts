@@ -9,6 +9,7 @@ export interface AgentEntry {
   port: number;
   status: "pending_token" | "ready_to_start" | "active";
   token?: string | null;
+  discord_user_id?: string;
   created_at?: string;
   activated_at?: string;
 }
@@ -222,5 +223,21 @@ export class RegistryAPI {
     registry.next_port = port + 1;
     await this.save(registry);
     return port;
+  }
+
+  /**
+   * Update an agent's Discord User ID (set when bot connects to Discord)
+   */
+  async updateDiscordUserId(agentId: string, discordUserId: string): Promise<boolean> {
+    const registry = await this.load();
+    const agent = registry.agents[agentId];
+
+    if (!agent) {
+      return false;
+    }
+
+    agent.discord_user_id = discordUserId;
+    await this.save(registry);
+    return true;
   }
 }

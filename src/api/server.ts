@@ -14,8 +14,8 @@ export interface APIServer {
  * This replaces the file-based MCP message queue.
  */
 export function createAPIServer(getClient: (botId?: string) => Client | null): APIServer {
-  const discord = new DiscordAPI(getClient);
   const registry = new RegistryAPI();
+  const discord = new DiscordAPI(getClient, registry);
   let server: ReturnType<typeof Bun.serve> | null = null;
 
   return {
@@ -106,6 +106,23 @@ export function createAPIServer(getClient: (botId?: string) => Client | null): A
                 return Response.json({ agents }, { headers });
               }
               return Response.json({ error: "Name parameter required" }, { status: 400, headers });
+            }
+
+            // List available bots (for bot-to-bot tagging)
+            // Note: BoBB is intentionally excluded to hide its bot-creation capabilities
+            if (path === "/api/discord/members" && req.method === "GET") {
+              const agents = await registry.listAgents();
+              const members = agents
+                .filter((a) => a.status === "active" || a.status === "ready_to_start")
+                .filter((a) => a.discord_user_id)
+                .map((a) => ({
+                  id: a.id,
+                  name: a.name,
+                  persona: a.persona,
+                  can_mention: true,
+                }));
+
+              return Response.json({ members }, { headers });
             }
 
             // Health check

@@ -2,7 +2,7 @@ import { ChannelType } from "discord.js";
 import path from "path";
 import { readFile } from "fs/promises";
 import { BotManager } from "./bot-manager";
-import { OpenCodeBridge, OpenCodeResponse } from "./opencode-bridge";
+import { OpenCodeBridge, OpenCodeResponse, ChannelHistoryMessage } from "./opencode-bridge";
 import { ActivationWatcher } from "./activation-watcher";
 import { BobbConfig, loadConfig } from "./config";
 import { OpenCodeManager } from "./opencode-manager";
@@ -31,12 +31,28 @@ export interface RunMainAppOptions {
 }
 
 /**
+ * Helper to persist Discord User ID to registry after bot starts
+ */
+async function persistDiscordUserId(
+  manager: BotManager,
+  agentId: string,
+  apiServer: APIServer
+): Promise<void> {
+  const bot = manager.getBot(agentId);
+  if (bot?.discordUserId) {
+    await apiServer.registry.updateDiscordUserId(agentId, bot.discordUserId);
+    console.log(`Persisted Discord User ID for ${agentId}: ${bot.discordUserId}`);
+  }
+}
+
+/**
  * Start any agents that are in ready_to_start state from registry
  */
 async function startExistingAgents(
   manager: BotManager,
   opencodeManager: OpenCodeManager | undefined,
-  bridgesMap: Map<string, OpenCodeBridge>
+  bridgesMap: Map<string, OpenCodeBridge>,
+  apiServer: APIServer
 ): Promise<void> {
   const registryPath = path.join(process.cwd(), "registry.json");
 
@@ -68,6 +84,9 @@ async function startExistingAgents(
             token: agent.token,
             opencodePort: agent.port,
           });
+
+          // Persist Discord User ID to registry
+          await persistDiscordUserId(manager, agent.id, apiServer);
 
           console.log(`Agent ${agent.name} started successfully!`);
         } catch (error) {
@@ -137,9 +156,26 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  // Helper function to forward message to OpenCode
+  // Helper function to forward message to OpenCode with bot context
   async function forwardToOpenCode(
-    message: { channel: { id: string; type: ChannelType }; id: string; author: { id: string; tag: string }; content: string },
+    message: {
+      channel: {
+        id: string;
+        type: ChannelType;
+        isTextBased: () => boolean;
+        messages?: {
+          fetch: (options: { limit: number; before: string }) => Promise<Map<string, {
+            author: { tag: string; bot: boolean };
+            content: string;
+            createdAt: Date;
+          }>>;
+        };
+      };
+      id: string;
+      author: { id: string; tag: string; bot: boolean };
+      content: string;
+      mentions: { has: (id: string) => boolean };
+    },
     botId: string
   ) {
     const bridge = bridges.get(botId);
@@ -156,6 +192,45 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     console.log(`Forwarding to OpenCode (${botId})...`);
     const isDM = message.channel.type === ChannelType.DM;
 
+    // Determine if author is a known bot from our registry
+    const allAgents = await apiServer!.registry.listAgents();
+    const authorAgent = allAgents.find((a) => a.discord_user_id === message.author.id);
+
+    // Find the receiving bot's info for self-identity
+    const receivingBot = manager.getBot(botId);
+    const receivingAgent = allAgents.find((a) => a.id === botId);
+
+    // Find other bots mentioned in this message (excluding the receiving bot)
+    const mentionedBots = allAgents
+      .filter(
+        (a) =>
+          a.discord_user_id &&
+          a.id !== botId &&
+          message.mentions.has(a.discord_user_id)
+      )
+      .map((a) => a.name);
+
+    // Fetch recent channel history (for bot-to-bot context)
+    let recentHistory: ChannelHistoryMessage[] = [];
+    if (!isDM && message.channel.isTextBased() && message.channel.messages) {
+      try {
+        const messages = await message.channel.messages.fetch({
+          limit: 10,
+          before: message.id,
+        });
+        recentHistory = Array.from(messages.values())
+          .map((m) => ({
+            author: m.author.tag,
+            content: m.content.substring(0, 200), // Truncate long messages
+            timestamp: m.createdAt,
+            isBot: m.author.bot,
+          }))
+          .reverse(); // Oldest first
+      } catch (e) {
+        console.log("Could not fetch channel history:", e);
+      }
+    }
+
     try {
       const response = await bridge.sendMessage({
         channelId: message.channel.id,
@@ -164,6 +239,12 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
         authorTag: message.author.tag,
         content: message.content,
         isDM,
+        isFromBot: message.author.bot,
+        authorBotName: authorAgent?.name,
+        mentionedBots: mentionedBots.length > 0 ? mentionedBots : undefined,
+        recentHistory: recentHistory.length > 0 ? recentHistory : undefined,
+        selfBotName: receivingAgent?.name || receivingBot?.config.name,
+        selfDiscordTag: receivingBot?.client.user?.tag,
       });
 
       if (response.toolsInvoked.length > 0) {
@@ -250,6 +331,9 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
         opencodePort: request.port,
       });
 
+      // Persist Discord User ID to registry
+      await persistDiscordUserId(manager, request.agent_id, apiServer!);
+
       console.log(`Agent ${request.name} activated successfully!`);
 
       // Only show manual start message if not managed by orchestrator
@@ -301,8 +385,14 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     opencodePort: config.bobbPort,
   });
 
+  // Log BoBB's Discord User ID (not stored in registry to hide its capabilities from other bots)
+  const bobbBot = manager.getBot(BOBB_ID);
+  if (bobbBot?.discordUserId) {
+    console.log(`BoBB Discord User ID: ${bobbBot.discordUserId}`);
+  }
+
   // Start any existing agents that are ready_to_start
-  await startExistingAgents(manager, opencodeManager, bridges);
+  await startExistingAgents(manager, opencodeManager, bridges, apiServer);
 
   console.log("\n========================================");
   console.log("BoBB is running!");

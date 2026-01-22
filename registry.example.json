@@ -1,0 +1,15 @@
+{
+  "agents": {
+    "example-bot": {
+      "id": "example-bot",
+      "name": "Example Bot",
+      "persona": "I am an example bot persona. Replace this with your bot's personality and behavior description.",
+      "port": 4097,
+      "status": "ready_to_start",
+      "token": "YOUR_DISCORD_BOT_TOKEN_HERE",
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "activated_at": "2026-01-01T00:00:00.000Z"
+    }
+  },
+  "next_port": 4098
+}
