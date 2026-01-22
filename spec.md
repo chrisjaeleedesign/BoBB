@@ -1,474 +1,356 @@
-# Platform Summary
+# BoBB Technical Specification
 
 ## Vision
 
-A Discord-based **ambient intelligence platform** that transforms a Discord server into a living, queryable knowledge base. Users create personalized AI agents that observe conversations, understand context, and take action—turning passive chat spaces into intelligent workspaces.
-
-The core insight: Discord servers are already where communities think, plan, and collaborate. Valuable information flows through channels daily—decisions made, questions answered, ideas proposed—but it's lost in the scroll. We capture, structure, and activate that knowledge.
+BoBB (Bot Builder Bot) is a Discord bot that creates other Discord bots. Users interact with BoBB through natural conversation to define bot personas, and BoBB handles the technical setup. Each created bot runs as an independent AI agent powered by OpenCode.
 
 ---
 
-## Core Value Proposition: The Database
-
-**The primary asset is a structured, semantic database of all Discord activity.**
-
-Every message that flows through the connected server becomes a queryable record with rich metadata—embeddings for semantic search, extracted topics, intent classification, and flexible user-defined fields.
-
-### What This Enables
-
-**For Agents**
-- Semantic search across all server history
-- Context retrieval for relevant past discussions
-- Pattern recognition (recurring questions, unresolved threads)
-- Relationship mapping (who knows what, who talks to whom)
-
-**For Users (Direct Query)**
-- "What did we decide about the pricing model?"
-- "Show me all unresolved questions from #product this week"
-- "Who has context on the AWS migration?"
-- "Summarize the discussion around feature X"
-
-**For Analytics**
-- Conversation velocity and health metrics
-- Topic trends over time
-- Knowledge gap identification
-- Team communication patterns
-
----
-
-## Agents
-
-Autonomous AI entities that operate on top of the database.
-
-### Agent Definition
-
-- **Persona**: Name, avatar, personality, communication style
-- **Purpose**: What the agent is designed to help with
-- **Triggers**: Conditions that activate the agent
-- **Capabilities**: What actions the agent can take
-- **Memory**: Agent-specific context and learned preferences
-
-### Trigger Types
-
-| Trigger | Example |
-|---------|---------|
-| Mention | @AgentName activates |
-| Keyword | "help", "question", specific terms |
-| Schedule | Daily at 9am, weekly on Monday |
-| Pattern | Unanswered question older than 2 hours |
-| Event | New thread created, user joins |
-| Query result | "When messages matching X exceed threshold Y" |
-
-### Agent Actions
-
-- **Respond**: Send a message in channel
-- **Query**: Search the database for context
-- **Summarize**: Condense a time range or thread
-- **Create**: Make tasks, notes, or records in external systems
-- **Alert**: Notify specific users or channels
-- **Update metadata**: Tag messages with custom fields
-
----
-
-## Current Focus: Bot Builder
-
-The immediate product is a **bot builder**—a streamlined interface for creating and deploying Discord agents that feed the shared database.
-
-### User Flow
-
-1. **Create Agent**
-   - Define persona (name, avatar, personality description)
-   - Set purpose and behavioral guidelines
-   - Configure triggers
-
-2. **Connect Bot**
-   - User creates bot application in Discord Developer Portal
-   - User provides bot token to the platform
-   - Platform validates and stores token securely
-
-3. **Deploy to Server**
-   - Platform generates OAuth2 invite URL
-   - User authorizes bot to their server
-   - Bot begins ingesting messages into the database
-   - Agent responds based on trigger configuration
-
-4. **Query & Refine**
-   - User can query the database directly
-   - Monitor agent activity
-   - Refine triggers and persona based on real usage
-
-### Why Manual Bot Creation?
-
-Discord provides **no API for programmatic bot creation**. All bots must be manually created via the Developer Portal. This is intentional for abuse prevention and verification. We accept this constraint and optimize the onboarding experience around it.
-
----
-
-## Architecture: Thin Clients + OpenCode Servers
-
-The key architectural insight: **Discord bots are thin clients. Intelligence lives in OpenCode.**
-
-### How It Works
+## Architecture
 
 ```
+Discord User
+     │
+     │ @BoBB or @ChildBot
+     ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      DISCORD SERVER                         │
-└─────────────────────────┬───────────────────────────────────┘
-                          │ messages (Gateway WebSocket)
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 THIN CLIENT (Discord Bot)                   │
+│  Main Process (src/index.ts)                                │
 │                                                             │
-│   - Connects to Discord Gateway (WebSocket)                 │
-│   - Listens for MESSAGE_CREATE and other events             │
-│   - Evaluates triggers (mentions, keywords, patterns)       │
-│   - Forwards relevant messages to OpenCode server via HTTP  │
-│   - Sends responses back to Discord via REST API            │
-│   - No LLM calls, no business logic, no decision-making     │
-│                                                             │
-└─────────────────────────┬───────────────────────────────────┘
-                          │ HTTP (OpenCode SDK)
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│               OPENCODE SERVER (per agent)                   │
-│                                                             │
-│   Started via: opencode serve --port {port}                 │
-│   Accessed via: @opencode-ai/sdk                            │
-│                                                             │
-│   /agents/{agent-name}/                                     │
-│   ├── opencode.json      (agent config, model, permissions) │
-│   ├── AGENTS.md          (persona + purpose + rules)        │
-│   ├── .opencode/                                            │
-│   │   ├── agents/        (subagent definitions)             │
-│   │   └── skill/         (reusable prompt patterns)         │
-│   │       └── {skill-name}/                                 │
-│   │           └── SKILL.md                                  │
-│   └── tools/             (custom MCP tools or scripts)      │
-│       ├── query_db.py                                       │
-│       ├── send_message.py                                   │
-│       └── ...                                               │
-│                                                             │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                        POSTGRES                             │
-│                   (shared message database)                 │
-└─────────────────────────────────────────────────────────────┘
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐ │
+│  │  HTTP API       │  │  BotManager     │  │  OpenCode   │ │
+│  │  (port 3456)    │  │  (Discord.js)   │  │  Manager    │ │
+│  └────────┬────────┘  └────────┬────────┘  └──────┬──────┘ │
+│           │                    │                   │        │
+└───────────┼────────────────────┼───────────────────┼────────┘
+            │                    │                   │
+            │    ┌───────────────┴───────────────┐   │
+            │    │                               │   │
+            ▼    ▼                               ▼   ▼
+     ┌─────────────────┐                 ┌─────────────────┐
+     │ BoBB Discord    │                 │ Child Discord   │
+     │ Client          │                 │ Clients         │
+     └────────┬────────┘                 └────────┬────────┘
+              │                                   │
+              ▼                                   ▼
+     ┌─────────────────┐                 ┌─────────────────┐
+     │ BoBB OpenCode   │                 │ Child OpenCode  │
+     │ Server          │                 │ Servers         │
+     │ (port 4096)     │                 │ (port 4097+)    │
+     └─────────────────┘                 └─────────────────┘
 ```
 
-### Why This Architecture
+### Key Design Decisions
 
-**Simplicity**: Discord bot code is trivial—just WebSocket event listening and HTTP calls. All complexity lives in OpenCode, which handles LLM orchestration natively.
+1. **Thin Discord Clients**: Discord bots are minimal—they receive messages, forward to OpenCode, and send responses. No business logic.
 
-**Flexibility**: Each agent gets its own OpenCode environment. Change behavior by editing markdown files (AGENTS.md, SKILL.md), not code.
+2. **HTTP API for Tools**: Instead of MCP tools, agents call HTTP endpoints to send messages and manage the registry. This simplifies tool definition and debugging.
 
-**Standardization**: Tools and skills are templates. Bot builder duplicates them for each new agent, then customizes persona/purpose.
+3. **File-Based Registry**: Agent configuration stored in `registry.json`. Simple, no database required.
 
-**Future-proof**: Local now, containerized later. Each agent directory becomes a container with OpenCode installed.
+4. **One OpenCode Server Per Bot**: Each bot gets its own OpenCode server with isolated context and persona.
+
+---
+
+## Components
+
+### BoBB (The Bot Builder)
+
+The primary bot that users interact with to create other bots.
+
+**Capabilities:**
+- Create new agent configurations
+- Guide users through Discord Developer Portal setup
+- Store Discord tokens and activate bots
+- List and manage existing agents
+
+**Location:** `agents/bobb/AGENTS.md`
+
+### Child Agents
+
+Bots created by BoBB. Each has:
+- Unique persona defined in `AGENTS.md`
+- Own Discord bot token
+- Own OpenCode server on dedicated port
+- Access to `send_message` and `list_members` tools
+
+**Template:** `agents/_template/AGENTS.md`
+
+### HTTP API Server
+
+Runs on port 3456. Provides tools for agents via HTTP endpoints.
+
+**Discord Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/discord/send` | POST | Send message to channel |
+| `/api/discord/members` | GET | List available bots for tagging |
+
+**Registry Endpoints:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/registry/agents` | GET | List all agents |
+| `/api/registry/agents` | POST | Create new agent |
+| `/api/registry/agents/:id` | GET | Get agent details |
+| `/api/registry/agents/:id` | PUT | Update agent (token/status) |
+| `/api/registry/agents/pending` | GET | Agents awaiting tokens |
+| `/api/registry/agents/search` | GET | Search by name |
+
+**Health:**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Server status |
+
+### Registry
+
+JSON file storing agent configurations.
+
+**Location:** `registry.json` (gitignored, contains tokens)
+**Template:** `registry.example.json`
+
+**Schema:**
+```json
+{
+  "agents": {
+    "agent-id": {
+      "id": "agent-id",
+      "name": "Display Name",
+      "persona": "Agent personality description...",
+      "port": 4097,
+      "status": "active",
+      "token": "discord-bot-token",
+      "discord_user_id": "123456789",
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "activated_at": "2026-01-01T00:00:00.000Z"
+    }
+  },
+  "next_port": 4098
+}
+```
+
+**Agent Statuses:**
+| Status | Description |
+|--------|-------------|
+| `pending_token` | Created, awaiting Discord token |
+| `ready_to_start` | Has token, ready to launch |
+| `active` | Running |
 
 ---
 
 ## Bot-to-Bot Communication
 
-When multiple agents need to coordinate, **they communicate via Discord itself**.
+Bots can interact with each other through Discord.
 
-### How It Works
+### Self-Identity
 
-Discord bots receive `MESSAGE_CREATE` events for ALL messages in channels they can see—including messages from other bots. By default, most bots ignore messages where `message.author.bot === true`, but our thin clients can be configured to process bot messages.
-
-### Communication Patterns
-
-**Direct Mention**: One agent can @mention another agent to trigger it
+Each bot knows its own identity via the message context:
 ```
-Agent A: @AgentB can you summarize the discussion above?
-Agent B: [processes and responds]
+[Discord Channel 123456]
+You are: Biden Bot (@biden_bot#1234)
+From: trump_bot#5678 (User ID: 999) [BOT] (Bot Name: Trump Bot)
+...
 ```
 
-**Designated Channel**: Agents can have a private `#agent-coordination` channel for inter-agent communication that users can optionally observe
+This prevents bots from tagging themselves.
 
-**Message Tagging**: Agents can include structured metadata in their messages (e.g., in embeds or at the end of messages) that other agents can parse
+### Tagging Other Bots
 
-### Why Discord for Inter-Agent Communication?
-
-- **Transparency**: Users can observe agent coordination if desired
-- **Simplicity**: No separate message bus or IPC mechanism needed
-- **Debuggability**: All agent communication is logged in Discord
-- **Natural**: Agents behave like team members communicating in channels
-
-### Configuration
-
-Each thin client has a flag: `processBotsMessages: boolean`
-- `false` (default): Ignore messages from other bots
-- `true`: Process messages from bots, enabling inter-agent communication
-
----
-
-## OpenCode Integration Details
-
-### Starting an OpenCode Server
-
-```bash
-# Start server for an agent
-cd /agents/{agent-name}
-opencode serve --port 4097
-```
-
-Or programmatically via SDK:
-```typescript
-import { createOpencode } from "@opencode-ai/sdk"
-
-const { client, server } = await createOpencode({
-  port: 4097,
-  config: {
-    model: "anthropic/claude-sonnet-4-20250514"
-  }
-})
-```
-
-### Sending Prompts to OpenCode
-
-```typescript
-import { createOpencodeClient } from "@opencode-ai/sdk"
-
-const client = createOpencodeClient({
-  baseUrl: "http://localhost:4097"
-})
-
-// Create or get session
-const session = await client.session.create({
-  body: { title: "Discord conversation" }
-})
-
-// Send message and get response
-const result = await client.session.prompt({
-  path: { id: session.id },
-  body: {
-    parts: [{ type: "text", text: userMessage }]
-  }
-})
-```
-
-### Agent Configuration (opencode.json)
-
+Use the `mention_bots` parameter in `send_message`:
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "model": "anthropic/claude-sonnet-4-20250514",
-  "agent": {
-    "discord-agent": {
-      "description": "Responds to Discord messages with context from the database",
-      "mode": "primary",
-      "prompt": "{file:./AGENTS.md}",
-      "tools": {
-        "bash": false,
-        "write": false,
-        "edit": false
-      },
-      "permission": {
-        "bash": "deny",
-        "edit": "deny"
-      }
-    }
-  },
-  "mcp": {
-    "database": {
-      "command": "python",
-      "args": ["tools/mcp_database.py"],
-      "env": {
-        "DATABASE_URL": "${DATABASE_URL}"
-      }
-    }
-  }
+  "channel_id": "123456",
+  "content": "What do you think about this?",
+  "mention_bots": ["Biden Bot"]
 }
 ```
 
-### AGENTS.md Template
+The API resolves bot names to Discord user IDs and adds proper @mentions.
 
-```markdown
-# {Agent Name}
+### Channel History
 
-## Persona
-{User-defined personality and communication style}
-
-## Purpose
-{What this agent is designed to help with}
-
-## Rules
-- Always query the database for context before responding
-- Stay in character as defined in the persona
-- Be concise in Discord messages (under 2000 characters)
-- Use the send_message tool to respond to Discord
-- {Additional user-defined rules}
-
-## Available Tools
-- `query_db`: Search the message database semantically
-- `get_context`: Fetch recent messages from the current channel
-- `send_message`: Send a response to Discord
-
-## Response Format
-When responding to Discord, always use the send_message tool with:
-- channel_id: The channel to respond in
-- content: Your response text
-- reply_to: (optional) Message ID to reply to
+Bots receive recent channel history to understand conversation context:
+```
+--- Recent Channel History ---
+[2m ago] Biden Bot [BOT]: I think we should focus on workers.
+[3m ago] Trump Bot [BOT]: Nobody knows trade better than me.
+[5m ago] chris#1234: @Trump @Biden debate about trade policy
+--- End History ---
 ```
 
-### Skill Template Example (.opencode/skill/summarize/SKILL.md)
+### Conversation Stopping
 
-```markdown
+**Natural Stopping**: Bots use vibes-based prompting to recognize when conversations should end:
+- Topic has been addressed
+- Points are being repeated
+- Other bot is wrapping up
+
+**Human Control**: Users can say "stop", "enough", or "quiet" in the channel to end bot exchanges immediately.
+
+### Loop Prevention
+
+- Bots only respond to other bots when explicitly @mentioned
+- Bots never tag themselves
+- Bots can see conversation history to avoid redundant responses
+
 ---
-description: Summarize a set of Discord messages
----
 
-# Summarize Skill
+## Agent Lifecycle
 
-When asked to summarize messages:
+```
+1. CREATE
+   User: "@BoBB create a chef bot"
+   → POST /api/registry/agents
+   → Creates agents/{id}/AGENTS.md from template
+   → Status: pending_token
 
-1. Query the database for the relevant time range or thread
-2. Identify the key topics, decisions, and action items
-3. Structure the summary as:
-   - **Overview**: 1-2 sentence high-level summary
-   - **Key Points**: Bullet list of main topics discussed
-   - **Decisions Made**: Any conclusions or agreements
-   - **Open Questions**: Unresolved items
-4. Keep the summary concise (aim for <500 words)
-5. Include message links for important references
+2. ACTIVATE
+   User sends Discord token via DM
+   → PUT /api/registry/agents/:id {token}
+   → Stores token in registry
+   → Status: ready_to_start
+
+3. START
+   → Writes activation signal file
+   → ActivationWatcher detects signal
+   → Starts OpenCode server on assigned port
+   → Starts Discord client with token
+   → Status: active
+
+4. ON RESTART
+   → Reads registry.json
+   → Starts all ready_to_start/active agents
+   → Resumes normal operation
 ```
 
 ---
 
-## Bot Builder Creates
+## Message Context Format
 
-When a user creates a new agent, the bot builder:
+When a bot receives a Discord message, it's formatted as:
 
-1. **Creates agent directory**
-   ```
-   /agents/{agent-id}/
-   ```
+```
+[Discord Channel 123456789]
+You are: Chef Bot (@chefbot#1234)
+From: username#5678 (User ID: 111222333)
+Channel ID: 123456789
+Message ID: 987654321 (use this as reply_to)
+Is From Bot: false
 
-2. **Copies template files**
-   - `opencode.json` (customized with model preferences)
-   - `AGENTS.md` (customized with user's persona/purpose/triggers)
-   - `.opencode/skill/` (standard skills: summarize, answer, extract)
-   - `tools/` (standard MCP tools for database access)
+--- Recent Channel History ---
+[5m ago] username#5678: What should I cook tonight?
+[3m ago] Chef Bot [BOT]: How about pasta? What ingredients do you have?
+--- End History ---
 
-3. **Stores configuration in database**
-   - Bot token (encrypted)
-   - Trigger rules
-   - Agent metadata
-   - OpenCode server port assignment
+I have chicken, tomatoes, and garlic.
+```
 
-4. **Starts thin client process**
-   - Spawns Discord bot with provided token
-   - Connects to Discord Gateway
-   - Begins listening for triggers
-
-5. **Starts OpenCode server**
-   - Spawns `opencode serve` for this agent
-   - Points to agent directory
-   - Assigns unique port
-   - Ready to receive requests from thin client
+**Fields:**
+- **You are**: Bot's own identity (name + Discord tag)
+- **From**: Message author with bot indicator if applicable
+- **Channel/Message ID**: For replying
+- **Is From Bot**: Whether sender is a bot
+- **Recent History**: Last 10 messages for context
+- **Content**: The actual message
 
 ---
 
-## Thin Client Implementation
+## Configuration
 
-The thin client is intentionally minimal:
+### Environment Variables
 
-```typescript
-// Pseudocode for thin client
-import { Client, GatewayIntentBits } from 'discord.js'
-import { createOpencodeClient } from '@opencode-ai/sdk'
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BOBB_DISCORD_TOKEN` | BoBB's Discord bot token | Required |
+| `ANTHROPIC_API_KEY` | Anthropic API key | Required |
+| `BOBB_OPENCODE_PORT` | BoBB's OpenCode port | 4096 |
+| `BOBB_CHILD_PORT_START` | Starting port for children | 4097 |
+| `OPENCODE_COMMAND` | OpenCode CLI command | opencode |
+| `OPENCODE_HEALTH_TIMEOUT` | Health check timeout (ms) | 30000 |
 
-const discord = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-})
+### OpenCode Configuration
 
-const opencode = createOpencodeClient({
-  baseUrl: `http://localhost:${AGENT_PORT}`
-})
-
-const config = loadAgentConfig() // triggers, processBotsMessages, etc.
-
-discord.on('messageCreate', async (message) => {
-  // Skip own messages
-  if (message.author.id === discord.user.id) return
-  
-  // Skip bot messages unless configured to process them
-  if (message.author.bot && !config.processBotsMessages) return
-  
-  // Check triggers
-  if (!matchesTriggers(message, config.triggers)) return
-  
-  // Forward to OpenCode
-  const response = await opencode.session.prompt({
-    path: { id: sessionId },
-    body: {
-      parts: [{
-        type: "text",
-        text: formatDiscordMessage(message)
-      }]
-    }
-  })
-  
-  // Response handling is done by OpenCode via send_message tool
-})
-
-discord.login(BOT_TOKEN)
+Each agent has an `opencode.json` in its directory:
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "anthropic/claude-sonnet-4-20250514"
+}
 ```
 
-### Required Discord Intents
+### Agent Persona (AGENTS.md)
 
-For the thin client to work, the bot must request these Gateway Intents:
+Defines the bot's personality, rules, and tool instructions. See `agents/_template/AGENTS.md` for the full template.
 
+---
+
+## File Structure
+
+```
+BoBB/
+├── src/
+│   ├── startup.ts          # Orchestrator entry point
+│   ├── index.ts            # Main application logic
+│   ├── config.ts           # Environment configuration
+│   ├── opencode-manager.ts # OpenCode server lifecycle
+│   ├── opencode-bridge.ts  # OpenCode SDK client wrapper
+│   ├── bot-manager.ts      # Discord bot management
+│   ├── activation-watcher.ts # Watches for agent activation signals
+│   └── api/
+│       ├── index.ts        # API exports
+│       ├── server.ts       # HTTP server (Bun.serve)
+│       ├── discord.ts      # Discord message sending
+│       └── registry.ts     # Agent CRUD operations
+├── agents/
+│   ├── bobb/
+│   │   └── AGENTS.md       # BoBB persona + tools
+│   ├── _template/
+│   │   └── AGENTS.md       # Template for new bots
+│   └── {agent-id}/
+│       └── AGENTS.md       # Created bot personas
+├── registry.json           # Agent registry (gitignored)
+├── registry.example.json   # Registry template
+├── opencode.json           # BoBB's OpenCode config
+├── package.json
+├── tsconfig.json
+└── .env                    # Environment variables (gitignored)
+```
+
+---
+
+## Discord Requirements
+
+### Intents
+
+Bots require these Gateway Intents:
 | Intent | Purpose |
 |--------|---------|
-| `GUILDS` | Access to guild/server information |
-| `GUILD_MESSAGES` | Receive message events in server channels |
-| `MESSAGE_CONTENT` | Access actual message content (privileged intent) |
+| `GUILDS` | Access guild/server info |
+| `GUILD_MESSAGES` | Receive message events |
+| `MESSAGE_CONTENT` | Access message content (privileged) |
+| `DIRECT_MESSAGES` | Receive DMs (for token submission) |
 
-**Note**: `MESSAGE_CONTENT` is a privileged intent. Bots in >100 servers must be verified and approved for this intent via Discord Developer Portal.
+**Note**: `MESSAGE_CONTENT` is privileged. Bots in 100+ servers need verification.
 
----
+### Bot Creation
 
-## Technical Context
-
-- **Database**: Postgres (shared across all agents)
-- **Scope**: Single Discord server
-- **Bot tokens**: User-provided, stored encrypted
-- **Runtime**: Local for now, containerized later
-- **OpenCode**: One server process per agent, each on unique port
-- **Communication**: Thin clients ↔ OpenCode via HTTP, Agents ↔ Agents via Discord
+Discord provides no API for programmatic bot creation. Users must:
+1. Create application at Discord Developer Portal
+2. Create bot under application
+3. Generate and copy token
+4. Send token to BoBB
 
 ---
 
-## Process Management (Local)
+## Security
 
-For local development, we need to manage multiple processes:
-
-```
-Platform Manager
-├── Thin Client 1 (Discord bot process)
-├── OpenCode Server 1 (port 4097)
-├── Thin Client 2 (Discord bot process)
-├── OpenCode Server 2 (port 4098)
-└── ...
-```
-
-Options for local process management:
-- **PM2**: Process manager for Node.js, handles restarts and logging
-- **Simple spawn**: Node.js child_process for lightweight management
-- **Docker Compose**: Even locally, can use containers for isolation
+- **Tokens in registry.json**: File is gitignored. Use `registry.example.json` as template.
+- **Token submission**: Users should DM tokens to BoBB, not post in public channels.
+- **No token logging**: Tokens are stored but never logged.
 
 ---
 
-## Open Questions
+## Future Considerations
 
-- **Naming**: Platform needs a name
-- **Port allocation**: How to assign and track OpenCode server ports?
-- **Session management**: One long-running session per agent, or new session per conversation?
-- **Error handling**: What happens when OpenCode server crashes?
-- **Scaling**: When do we containerize? What's the trigger?
+- **Database**: Could add Postgres for semantic search and analytics
+- **Containerization**: Each agent could run in its own container
+- **Triggers**: Could add keyword/schedule triggers beyond @mentions
+- **Web UI**: Could add dashboard for agent management

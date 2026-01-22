@@ -233,6 +233,21 @@ export class RegistryAPI {
     const agent = registry.agents[agentId];
 
     if (!agent) {
+      // For special bots like OBB that aren't created through normal flow,
+      // create a minimal entry if it doesn't exist
+      if (agentId === "obb") {
+        registry.agents[agentId] = {
+          id: agentId,
+          name: "OBB",
+          persona: "Orchestration Bot - manages multi-bot interactions",
+          port: 4095,
+          status: "active",
+          discord_user_id: discordUserId,
+          created_at: new Date().toISOString(),
+        };
+        await this.save(registry);
+        return true;
+      }
       return false;
     }
 

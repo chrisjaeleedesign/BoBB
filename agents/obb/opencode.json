@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "google/gemini-2.5-flash",
+  "agent": {
+    "discord-bot": {
+      "description": "OBB - Orchestration bot that manages multi-bot interactions",
+      "model": "google/gemini-2.5-flash",
+      "tools": {
+        "send_message": true,
+        "tag_bot_in_channel": true,
+        "list_available_bots": true,
+        "get_bot_info": true,
+        "read": false,
+        "write": false,
+        "edit": false,
+        "bash": false,
+        "glob": false,
+        "grep": false
+      }
+    }
+  }
+}

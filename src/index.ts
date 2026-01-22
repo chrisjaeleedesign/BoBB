@@ -20,6 +20,8 @@ interface AgentRegistry {
 
 const BOBB_ID = "bobb";
 const BOBB_NAME = "BoBB";
+const OBB_ID = "obb";
+const OBB_NAME = "OBB";
 const API_PORT = 3001;
 
 // Track OpenCode bridges for child agents
@@ -121,6 +123,17 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
   const bobbDir = path.join(process.cwd(), "agents", "bobb");
   const bobbBridge = new OpenCodeBridge(config.bobbPort);
   bridges.set(BOBB_ID, bobbBridge);
+
+  // Create OpenCode bridge for OBB if configured
+  let obbEnabled = false;
+  if (config.obbDiscordToken) {
+    const obbBridge = new OpenCodeBridge(config.obbPort);
+    bridges.set(OBB_ID, obbBridge);
+    obbEnabled = true;
+    console.log(`OBB enabled on port ${config.obbPort}`);
+  } else {
+    console.log("OBB disabled (no OBB_DISCORD_TOKEN configured)");
+  }
 
   // Check if OpenCode server is running (only warn if not managed by orchestrator)
   if (!opencodeManager) {
@@ -261,8 +274,77 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     }
   }
 
+  /**
+   * Check if a message should be handled by OBB (multi-bot orchestration)
+   * Returns true if:
+   * - Multiple bots are mentioned in the message
+   * - @here is used (OBB will analyze if it's bot-directed)
+   * - OBB is explicitly mentioned
+   */
+  async function shouldRouteToOBB(
+    message: {
+      content: string;
+      mentions: { has: (id: string) => boolean };
+    },
+    callingBotName?: string
+  ): Promise<boolean> {
+    const logPrefix = callingBotName ? `[${callingBotName}]` : "[shouldRouteToOBB]";
+
+    if (!obbEnabled) {
+      console.log(`${logPrefix} OBB not enabled, skipping routing check`);
+      return false;
+    }
+
+    const allAgents = await apiServer!.registry.listAgents();
+    console.log(`${logPrefix} Checking routing for message, found ${allAgents.length} agents in registry`);
+
+    // Check if OBB is explicitly mentioned
+    const obbAgent = allAgents.find((a) => a.id === OBB_ID);
+    if (obbAgent?.discord_user_id && message.mentions.has(obbAgent.discord_user_id)) {
+      console.log(`${logPrefix} OBB explicitly mentioned, routing to OBB`);
+      return true;
+    }
+
+    // Count how many bots are mentioned (excluding BoBB and OBB)
+    const mentionedBots = allAgents.filter(
+      (a) =>
+        a.discord_user_id &&
+        a.id !== BOBB_ID &&
+        a.id !== OBB_ID &&
+        message.mentions.has(a.discord_user_id)
+    );
+    const mentionedBotCount = mentionedBots.length;
+    console.log(`${logPrefix} Found ${mentionedBotCount} mentioned bots: ${mentionedBots.map(b => b.name).join(", ")}`);
+
+    // Route to OBB if multiple bots mentioned
+    if (mentionedBotCount > 1) {
+      console.log(`${logPrefix} Multiple bots mentioned (${mentionedBotCount}), routing to OBB`);
+      return true;
+    }
+
+    // Check for @here (OBB will analyze context)
+    if (message.content.includes("@here")) {
+      console.log(`${logPrefix} @here detected, routing to OBB`);
+      return true;
+    }
+
+    console.log(`${logPrefix} No OBB routing needed`);
+    return false;
+  }
+
+  // Track messages already routed to OBB to avoid duplicate processing
+  // This needs to be checked FIRST to prevent race conditions
+  const obbRoutedMessages = new Set<string>();
+
   // Set up message handler for mentions (Discord -> OpenCode)
   manager.onMessage(async (message, bot) => {
+    // FIRST: Check if this message was already claimed by another bot for OBB routing
+    // This prevents race conditions where multiple bots try to route the same message
+    if (obbRoutedMessages.has(message.id)) {
+      console.log(`[${bot.config.name}] Message ${message.id} already routed to OBB, skipping`);
+      return;
+    }
+
     console.log(`\n--- Message Received ---`);
     console.log(`Bot: ${bot.config.name}`);
     console.log(`Channel: ${message.channel.id}`);
@@ -274,6 +356,22 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     // Show typing indicator while processing
     if (message.channel.isTextBased() && "sendTyping" in message.channel) {
       await message.channel.sendTyping();
+    }
+
+    // Check if this message should be routed to OBB for orchestration
+    // But only if this is NOT the OBB bot receiving the message
+    if (bot.config.id !== OBB_ID && await shouldRouteToOBB(message, bot.config.name)) {
+      // Mark IMMEDIATELY after deciding to route - before any async work
+      // This prevents race condition where another bot also decides to route
+      obbRoutedMessages.add(message.id);
+
+      // Clean up old entries after 1 minute
+      setTimeout(() => obbRoutedMessages.delete(message.id), 60000);
+
+      console.log(`[${bot.config.name}] Routing message ${message.id} to OBB for orchestration`);
+
+      await forwardToOpenCode(message, OBB_ID);
+      return;
     }
 
     await forwardToOpenCode(message, bot.config.id);
@@ -391,11 +489,39 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     console.log(`BoBB Discord User ID: ${bobbBot.discordUserId}`);
   }
 
+  // Start OBB if configured
+  if (obbEnabled && config.obbDiscordToken) {
+    console.log("\nStarting OBB (Orchestration Bot)...");
+
+    // Start OpenCode server for OBB if managed by orchestrator
+    if (opencodeManager) {
+      const obbDir = path.join(process.cwd(), "agents", "obb");
+      await opencodeManager.startServer(OBB_ID, config.obbPort, obbDir);
+    }
+
+    await manager.startBot({
+      id: OBB_ID,
+      name: OBB_NAME,
+      token: config.obbDiscordToken,
+      opencodePort: config.obbPort,
+    });
+
+    const obbBot = manager.getBot(OBB_ID);
+    if (obbBot?.discordUserId) {
+      console.log(`OBB Discord User ID: ${obbBot.discordUserId}`);
+      // Store OBB's Discord User ID in registry for mention detection
+      await apiServer.registry.updateDiscordUserId(OBB_ID, obbBot.discordUserId);
+    }
+  }
+
   // Start any existing agents that are ready_to_start
   await startExistingAgents(manager, opencodeManager, bridges, apiServer);
 
   console.log("\n========================================");
   console.log("BoBB is running!");
+  if (obbEnabled) {
+    console.log("OBB (Orchestration Bot) is running!");
+  }
   console.log(`API server: http://localhost:${API_PORT}`);
   console.log("- Mention @BoBB in Discord to interact");
   console.log("- DM @BoBB with a bot token to activate an agent");

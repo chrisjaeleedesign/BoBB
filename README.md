@@ -13,15 +13,15 @@ Discord User
 │  BoBB (Thin Client)                             │
 │  - Discord.js for gateway connection            │
 │  - Forwards mentions to OpenCode                │
-│  - Sends responses via MCP tool                 │
+│  - HTTP API for tool invocation                 │
 └─────────────────────┬───────────────────────────┘
                       │ HTTP (OpenCode SDK)
                       ▼
 ┌─────────────────────────────────────────────────┐
 │  OpenCode Server (port 4096)                    │
 │  - Claude Sonnet model                          │
-│  - MCP tools: discord, agent-manager            │
-│  - Skills: create-bot, respond-discord          │
+│  - Tools via HTTP API (port 3456)               │
+│  - BoBB persona with bot-creation abilities     │
 └─────────────────────────────────────────────────┘
                       │
                       │ Creates child agents
@@ -30,7 +30,8 @@ Discord User
 │  Child Agent (e.g., ChefBot)                    │
 │  - Own Discord bot token                        │
 │  - Own OpenCode server (port 4097+)             │
-│  - Custom persona and behavior                  │
+│  - Custom persona from AGENTS.md               │
+│  - HTTP tools for Discord messaging             │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -62,12 +63,19 @@ Discord User
    ANTHROPIC_API_KEY=your_anthropic_key
    ```
 
-4. Start BoBB:
+4. Create registry from template:
+   ```bash
+   cp registry.example.json registry.json
+   ```
+   Note: `registry.json` contains Discord tokens and is gitignored.
+
+5. Start BoBB:
    ```bash
    bun run start
    ```
 
 This single command:
+- Starts the HTTP API server on port 3456
 - Starts the OpenCode server on port 4096
 - Waits for health check to pass
 - Starts the Discord thin client
@@ -92,9 +100,28 @@ This single command:
 
 3. Follow the Discord Developer Portal setup instructions BoBB provides
 
-4. Send the bot token to BoBB (mention or DM)
+4. Send the bot token to BoBB (via DM for security)
 
 5. BoBB activates and starts your bot
+
+## Bot-to-Bot Interaction
+
+Bots can communicate with each other:
+
+- **Tagging**: Use `@BotName` in messages to invoke other bots
+- **Debates**: Ask bots to debate or discuss topics with each other
+- **Self-Awareness**: Bots know their own identity and won't tag themselves
+- **Natural Stopping**: Bots use conversation context to end exchanges naturally
+
+Example:
+```
+@TrumpBot debate climate change with @BidenBot
+```
+
+### Human Control
+
+- Say "stop", "enough", or "quiet" in the channel to end bot exchanges
+- Restart BoBB to fully reset all bot states
 
 ## Project Structure
 
@@ -105,49 +132,64 @@ BoBB/
 │   ├── index.ts            # Main application logic
 │   ├── config.ts           # Environment configuration
 │   ├── opencode-manager.ts # OpenCode server lifecycle
-│   ├── bot-manager.ts      # Discord bot management
 │   ├── opencode-bridge.ts  # OpenCode SDK client
-│   ├── message-queue.ts    # MCP → Discord message queue
-│   └── activation-watcher.ts # Agent activation signals
-├── tools/
-│   ├── mcp_discord.py      # Discord send_message MCP tool
-│   └── mcp_agent_manager.py # Agent CRUD MCP tools
+│   ├── bot-manager.ts      # Discord bot management
+│   ├── activation-watcher.ts # Agent activation signals
+│   └── api/
+│       ├── index.ts        # API exports
+│       ├── server.ts       # HTTP API server
+│       ├── discord.ts      # Discord API (send_message, list_members)
+│       └── registry.ts     # Agent registry CRUD
 ├── agents/
-│   ├── registry.json       # Agent registry (ports, tokens, status)
-│   ├── .activations/       # Activation signal files
-│   ├── .pending/           # Pending Discord messages
+│   ├── bobb/               # BoBB's persona
+│   │   └── AGENTS.md       # BoBB instructions
+│   ├── _template/          # Template for new bots
+│   │   └── AGENTS.md       # Template instructions
 │   └── {agent-id}/         # Per-agent directories
-│       ├── opencode.json
-│       ├── AGENTS.md
-│       └── .opencode/skills/
-├── .opencode/
-│   └── skills/
-│       ├── create-bot/     # Bot creation workflow
-│       └── respond-discord/ # Discord response skill
+│       └── AGENTS.md       # Agent persona
+├── registry.json           # Agent registry (gitignored, contains tokens)
+├── registry.example.json   # Registry template
 ├── opencode.json           # BoBB's OpenCode config
-├── AGENTS.md               # BoBB's persona and rules
 └── package.json
 ```
 
-## MCP Tools
+## HTTP API
 
-### BoBB Tools (agent-manager)
+The API server runs on port 3456 and provides tools for agents.
 
-| Tool | Description |
-|------|-------------|
-| `create_agent` | Create new agent with name and persona |
-| `activate_agent` | Store Discord token for an agent |
-| `start_agent` | Start an activated agent |
-| `list_agents` | List all registered agents |
-| `get_agent` | Get agent details by ID |
-| `get_pending_agents` | Get agents awaiting tokens |
-| `find_agent_by_name` | Search agents by name |
+### Discord Endpoints
 
-### Discord Tools (all agents)
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/discord/send` | POST | Send message to Discord channel |
+| `/api/discord/members` | GET | List available bots for tagging |
 
-| Tool | Description |
-|------|-------------|
-| `send_message` | Send message to Discord channel |
+**Send Message Request:**
+```json
+{
+  "channel_id": "123456789",
+  "content": "Hello!",
+  "reply_to": "987654321",
+  "mention_bots": ["Bot Name"]
+}
+```
+
+### Registry Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/registry/agents` | GET | List all agents |
+| `/api/registry/agents` | POST | Create new agent |
+| `/api/registry/agents/:id` | GET | Get agent by ID |
+| `/api/registry/agents/:id` | PUT | Update agent (token/status) |
+| `/api/registry/agents/pending` | GET | Get agents awaiting tokens |
+| `/api/registry/agents/search?name=X` | GET | Search agents by name |
+
+### Health Check
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Server health status |
 
 ## Configuration
 
@@ -167,18 +209,17 @@ Environment variables (`.env`):
 ```
 1. CREATE
    User: "Create a bot called ChefBot"
-   → create_agent(name, persona)
-   → Creates agents/{id}/ directory
+   → POST /api/registry/agents
+   → Creates agents/{id}/ directory with AGENTS.md
    → Status: pending_token
 
 2. ACTIVATE
    User: "Here's the token: xxx.xxx.xxx"
-   → activate_agent(id, token)
+   → PUT /api/registry/agents/:id with token
    → Stores token in registry
    → Status: ready_to_start
 
 3. START
-   → start_agent(id)
    → Writes activation file
    → ActivationWatcher detects
    → Starts OpenCode server
@@ -190,31 +231,68 @@ Environment variables (`.env`):
    → Starts all ready_to_start agents
 ```
 
+## Message Context
+
+When a bot receives a message, it gets rich context:
+
+```
+[Discord Channel 123456]
+You are: ChefBot (@ChefBot#1234)
+From: username#5678 (User ID: 123)
+Channel ID: 123456
+Message ID: 987654321 (use this as reply_to)
+Is From Bot: false
+
+--- Recent Channel History ---
+[2m ago] OtherBot [BOT]: Previous message...
+[5m ago] username#5678: Earlier message...
+--- End History ---
+
+Hey ChefBot, what should I cook?
+```
+
+This context includes:
+- **Self-identity**: Bot knows its own name and Discord tag
+- **Message metadata**: Channel, message IDs for replies
+- **Bot indicator**: Whether the sender is a bot
+- **Conversation history**: Recent messages for context
+
 ## Development
-
-### Adding a New MCP Tool
-
-1. Add handler function in `tools/mcp_agent_manager.py`
-2. Add tool schema to `tools/list` response
-3. Add tool routing to `tools/call` handler
-4. Document in `AGENTS.md`
 
 ### Debugging
 
-Check OpenCode server health:
+Check API server health:
+```bash
+curl http://localhost:3456/api/health
+```
+
+Check OpenCode server:
 ```bash
 curl http://localhost:4096/api/session
 ```
 
 View agent registry:
 ```bash
-cat agents/registry.json
+cat registry.json | jq
 ```
 
 Check running processes:
 ```bash
 ps aux | grep opencode
 ```
+
+### Adding New API Endpoints
+
+1. Add handler in `src/api/server.ts`
+2. If needed, add business logic to `src/api/discord.ts` or `src/api/registry.ts`
+3. Update tool instructions in `agents/bobb/AGENTS.md`
+
+## Security Notes
+
+- **registry.json** contains Discord tokens - it's gitignored by default
+- Use **registry.example.json** as a template
+- Bot tokens should be sent via DM to BoBB, not in public channels
+- Never commit tokens to version control
 
 ## License
 
