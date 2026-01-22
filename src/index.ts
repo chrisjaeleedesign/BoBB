@@ -268,8 +268,17 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
   });
 
   // Start the API server (for tools to call)
-  apiServer = createAPIServer(() => {
-    // Return any ready bot's client for sending messages (prefer BoBB)
+  apiServer = createAPIServer((botId?: string) => {
+    // If a specific bot is requested, use that bot
+    if (botId) {
+      const requestedBot = manager.getBot(botId);
+      if (requestedBot?.ready) {
+        return requestedBot.client;
+      }
+      console.warn(`Requested bot ${botId} not ready, falling back`);
+    }
+
+    // Fallback: prefer BoBB for backwards compatibility
     const bobbBot = manager.getBot(BOBB_ID);
     if (bobbBot?.ready) {
       return bobbBot.client;

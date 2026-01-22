@@ -13,7 +13,7 @@ export interface APIServer {
  * Create an HTTP API server for agent tools to call.
  * This replaces the file-based MCP message queue.
  */
-export function createAPIServer(getClient: () => Client | null): APIServer {
+export function createAPIServer(getClient: (botId?: string) => Client | null): APIServer {
   const discord = new DiscordAPI(getClient);
   const registry = new RegistryAPI();
   let server: ReturnType<typeof Bun.serve> | null = null;

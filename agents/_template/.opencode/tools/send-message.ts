@@ -1,6 +1,7 @@
 import { tool } from "@opencode-ai/plugin";
 
 const API_BASE = process.env.BOBB_API_URL || "http://localhost:3001";
+const AGENT_ID = process.env.AGENT_ID;
 
 export default tool({
   description: "Send a message to a Discord channel",
@@ -17,6 +18,7 @@ export default tool({
         channel_id: args.channel_id,
         content: args.content,
         reply_to: args.reply_to,
+        bot_id: AGENT_ID,
       }),
     });
 

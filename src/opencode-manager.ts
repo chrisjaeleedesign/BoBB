@@ -35,7 +35,7 @@ export class OpenCodeManager {
       stderr: "pipe",
       env: {
         ...process.env,
-        // Ensure child processes inherit environment
+        AGENT_ID: id,
       },
     });
 

@@ -4,6 +4,7 @@ export interface SendMessageRequest {
   channel_id: string;
   content: string;
   reply_to?: string;
+  bot_id?: string;
 }
 
 export interface SendMessageResponse {
@@ -17,9 +18,9 @@ export interface SendMessageResponse {
  * This allows OpenCode tools to send messages without needing MCP.
  */
 export class DiscordAPI {
-  private getClient: () => Client | null;
+  private getClient: (botId?: string) => Client | null;
 
-  constructor(getClient: () => Client | null) {
+  constructor(getClient: (botId?: string) => Client | null) {
     this.getClient = getClient;
   }
 
@@ -27,7 +28,7 @@ export class DiscordAPI {
    * Send a message to a Discord channel
    */
   async sendMessage(req: SendMessageRequest): Promise<SendMessageResponse> {
-    const client = this.getClient();
+    const client = this.getClient(req.bot_id);
 
     if (!client) {
       return { success: false, error: "No Discord client available" };
