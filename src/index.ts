@@ -332,14 +332,21 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     return false;
   }
 
-  // Track messages already routed to OBB to avoid duplicate processing
-  // This needs to be checked FIRST to prevent race conditions
-  const obbRoutedMessages = new Set<string>();
+  // Track messages for deduplication during routing decision
+  const processingMessages = new Set<string>(); // Messages currently being evaluated
+  const obbRoutedMessages = new Set<string>(); // Messages already routed to OBB
 
   // Set up message handler for mentions (Discord -> OpenCode)
   manager.onMessage(async (message, bot) => {
-    // FIRST: Check if this message was already claimed by another bot for OBB routing
-    // This prevents race conditions where multiple bots try to route the same message
+    const routingKey = `routing:${message.id}`;
+
+    // Check if any bot is already evaluating routing for this message
+    if (processingMessages.has(routingKey)) {
+      console.log(`[${bot.config.name}] Message ${message.id} routing already in progress, skipping`);
+      return;
+    }
+
+    // Check if already routed to OBB
     if (obbRoutedMessages.has(message.id)) {
       console.log(`[${bot.config.name}] Message ${message.id} already routed to OBB, skipping`);
       return;
@@ -359,19 +366,31 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
     }
 
     // Check if this message should be routed to OBB for orchestration
-    // But only if this is NOT the OBB bot receiving the message
-    if (bot.config.id !== OBB_ID && await shouldRouteToOBB(message, bot.config.name)) {
-      // Mark IMMEDIATELY after deciding to route - before any async work
-      // This prevents race condition where another bot also decides to route
-      obbRoutedMessages.add(message.id);
+    // Only non-OBB bots need to check this
+    if (bot.config.id !== OBB_ID) {
+      // Mark BEFORE async operation to prevent race condition
+      processingMessages.add(routingKey);
 
-      // Clean up old entries after 1 minute
-      setTimeout(() => obbRoutedMessages.delete(message.id), 60000);
+      try {
+        const shouldRoute = await shouldRouteToOBB(message, bot.config.name);
 
-      console.log(`[${bot.config.name}] Routing message ${message.id} to OBB for orchestration`);
+        if (shouldRoute) {
+          // Double-check if another bot routed while we were deciding
+          if (obbRoutedMessages.has(message.id)) {
+            console.log(`[${bot.config.name}] Message ${message.id} was routed by another bot, skipping`);
+            return;
+          }
 
-      await forwardToOpenCode(message, OBB_ID);
-      return;
+          obbRoutedMessages.add(message.id);
+          setTimeout(() => obbRoutedMessages.delete(message.id), 60000);
+
+          console.log(`[${bot.config.name}] Routing message ${message.id} to OBB for orchestration`);
+          await forwardToOpenCode(message, OBB_ID);
+          return;
+        }
+      } finally {
+        processingMessages.delete(routingKey);
+      }
     }
 
     await forwardToOpenCode(message, bot.config.id);
