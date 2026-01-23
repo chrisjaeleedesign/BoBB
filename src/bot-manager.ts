@@ -60,12 +60,6 @@ export class BotManager {
       ready: false,
     };
 
-    client.once("ready", () => {
-      instance.ready = true;
-      instance.discordUserId = client.user?.id;
-      console.log(`[${config.name}] Ready! Logged in as ${client.user?.tag} (ID: ${client.user?.id})`);
-    });
-
     client.on("messageCreate", async (message) => {
       // Ignore own messages
       if (message.author.id === client.user?.id) return;
@@ -83,26 +77,41 @@ export class BotManager {
       }
 
       // Handle mentions in channels
-      if (client.user && message.mentions.has(client.user.id)) {
+      const isMentioned = client.user && message.mentions.has(client.user.id);
+      const isHereMessage = message.content.includes("@here");
+
+      // OBB should also listen for @here messages (to analyze if bot-directed)
+      const isOBB = config.id === "obb";
+      const shouldHandle = isMentioned || (isOBB && isHereMessage);
+
+      if (shouldHandle) {
         const isFromBot = message.author.bot;
 
         // Check if this is an EXPLICIT mention in the message content
         // (Discord automatically adds replied-to user to mentions, but we want to
         // distinguish explicit @mentions from implicit reply pings for bot messages)
-        const isExplicitMention = message.content.includes(`<@${client.user.id}>`) ||
-                                  message.content.includes(`<@!${client.user.id}>`);
+        const isExplicitMention = client.user && (
+          message.content.includes(`<@${client.user.id}>`) ||
+          message.content.includes(`<@!${client.user.id}>`)
+        );
 
-        // If from a bot and not explicitly mentioned, ignore (prevents bot reply loops)
-        if (isFromBot && !isExplicitMention) {
+        // If from a bot and not explicitly mentioned (and not @here for OBB), ignore
+        if (isFromBot && !isExplicitMention && !(isOBB && isHereMessage)) {
           console.log(
             `[${config.name}] Ignoring implicit mention from bot ${message.author.tag}`
           );
           return;
         }
 
-        console.log(
-          `[${config.name}] Mentioned by ${message.author.tag}${isFromBot ? " [BOT]" : ""}: ${message.content}`
-        );
+        if (isOBB && isHereMessage && !isMentioned) {
+          console.log(
+            `[${config.name}] @here message received from ${message.author.tag}: ${message.content}`
+          );
+        } else {
+          console.log(
+            `[${config.name}] Mentioned by ${message.author.tag}${isFromBot ? " [BOT]" : ""}: ${message.content}`
+          );
+        }
 
         if (this.messageHandler) {
           await this.messageHandler(message, instance);
@@ -110,10 +119,26 @@ export class BotManager {
       }
     });
 
-    await client.login(config.token);
-    this.bots.set(config.id, instance);
+    // Return a promise that resolves only after the bot is fully ready
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error(`Bot ${config.name} failed to become ready within 30 seconds`));
+      }, 30000);
 
-    return instance;
+      client.once("ready", () => {
+        clearTimeout(timeout);
+        instance.ready = true;
+        instance.discordUserId = client.user?.id;
+        console.log(`[${config.name}] Ready! Logged in as ${client.user?.tag} (ID: ${client.user?.id})`);
+        this.bots.set(config.id, instance);
+        resolve(instance);
+      });
+
+      client.login(config.token).catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
   }
 
   /**

@@ -391,6 +391,15 @@ export async function runMainApp(options: RunMainAppOptions): Promise<void> {
       } finally {
         processingMessages.delete(routingKey);
       }
+    } else {
+      // OBB received message directly (e.g., via @here)
+      // Wait briefly for other bots to claim routing, then check if we should process
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      if (obbRoutedMessages.has(message.id)) {
+        console.log(`[${bot.config.name}] Message ${message.id} being routed by another bot, skipping direct processing`);
+        return;
+      }
     }
 
     await forwardToOpenCode(message, bot.config.id);
